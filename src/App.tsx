@@ -301,13 +301,25 @@ function App() {
         await signOut(auth); // Force them to verify before proceeding
       } else {
         const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        await userCredential.user.reload();
         if (!userCredential.user.emailVerified) {
-          setAuthError('Please verify your email before logging in.');
+          setAuthError('Please verify your email before logging in. Check your inbox or spam folder.');
           await signOut(auth);
         }
       }
     } catch (error: any) {
-      setAuthError(error.message);
+      const code = error?.code || '';
+      if (code === 'auth/user-not-found' || code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        setAuthError('Incorrect email or password. Please try again.');
+      } else if (code === 'auth/too-many-requests') {
+        setAuthError('Too many failed attempts. Please try again later.');
+      } else if (code === 'auth/invalid-email') {
+        setAuthError('Please enter a valid email address.');
+      } else if (code === 'auth/weak-password') {
+        setAuthError('Password should be at least 6 characters.');
+      } else {
+        setAuthError('Something went wrong. Please try again.');
+      }
     }
   };
 
