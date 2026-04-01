@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users_public
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - name: string (required, max 100 chars)
+    //   - streak: number (required, >= 0)
+    //   - points: number (required, >= 0)
+    //   - recognitions: list (optional, max 20 items)
+    //
+    // Collection: users_private
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - whatsapp: string (required, max 20 chars)
+    //   - checkInsThisMonth: list (required, max 31 items)
+    //   - lastCheckIn: string (optional, max 20 chars)
+    //   - lastMonth: string (required, max 20 chars)
+    //   - points: number (required, >= 0)
+    //   - streak: number (required, >= 0)
+    //   - recognitions: list (optional, max 20 items)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.email == "israelogbemudia190@gmail.com";
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+
+    function validOptionalStringLength(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    function validOptionalList(field, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is list &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUserPublic(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'streak', 'points', 'recognitions']) &&
+             hasRequiredFields(['uid', 'name', 'streak', 'points']) &&
+             validStringLength('uid', 1, 100) &&
+             validStringLength('name', 1, 100) &&
+             data.streak is number && data.streak >= 0 &&
+             data.points is number && data.points >= 0 &&
+             validOptionalList('recognitions', 20);
+    }
+
+    function isValidUserPrivate(data) {
+      return hasOnlyAllowedFields(['uid', 'whatsapp', 'email', 'checkInsThisMonth', 'lastCheckIn', 'lastMonth', 'points', 'streak', 'recognitions']) &&
+             hasRequiredFields(['uid', 'whatsapp', 'email', 'checkInsThisMonth', 'lastMonth', 'points', 'streak']) &&
+             validStringLength('uid', 1, 100) &&
+             validStringLength('whatsapp', 1, 20) &&
+             validStringLength('email', 1, 100) &&
+             data.checkInsThisMonth is list && data.checkInsThisMonth.size() <= 31 &&
+             validOptionalStringLength('lastCheckIn', 1, 20) &&
+             validStringLength('lastMonth', 1, 20) &&
+             data.points is number && data.points >= 0 &&
+             data.streak is number && data.streak >= 0 &&
+             validOptionalList('recognitions', 20);
+    }
+
+    function isValidBooking(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'whatsapp', 'date', 'time', 'status', 'createdAt']) &&
+             hasRequiredFields(['uid', 'name', 'date', 'time', 'status', 'createdAt']) &&
+             validStringLength('uid', 1, 100) &&
+             validStringLength('name', 1, 100) &&
+             validOptionalStringLength('email', 0, 100) &&
+             validOptionalStringLength('whatsapp', 0, 20) &&
+             validStringLength('date', 1, 20) &&
+             validStringLength('time', 1, 20) &&
+             (data.status == 'pending' || data.status == 'approved') &&
+             validStringLength('createdAt', 1, 50);
+    }
+
+    function isValidMessage(data) {
+      return hasOnlyAllowedFields(['type', 'content', 'createdAt', 'userName']) &&
+             hasRequiredFields(['type', 'content', 'createdAt']) &&
+             (data.type == 'testimony' || data.type == 'anonymous') &&
+             validStringLength('content', 1, 5000) &&
+             validStringLength('createdAt', 1, 50) &&
+             validOptionalStringLength('userName', 1, 100);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    
+    match /users_public/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUserPublic(request.resource.data) && uidUnchanged();
+      allow update: if isOwner(userId) && isValidUserPublic(request.resource.data) && uidNotModified();
+      allow delete: if false; // Users cannot delete their public profile
+    }
+
+    match /users_private/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUserPrivate(request.resource.data) && uidUnchanged();
+      allow update: if isOwner(userId) && isValidUserPrivate(request.resource.data) && uidNotModified();
+      allow delete: if false; // Users cannot delete their private profile
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidBooking(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isOwner(resource.data.uid) || isAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && isValidMessage(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+  }
+}

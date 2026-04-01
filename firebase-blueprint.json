@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Public user data for the leaderboard.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "streak": { "type": "number" },
+        "points": { "type": "number" },
+        "recognitions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["uid", "name", "streak", "points"]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Private user data including PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "checkInsThisMonth": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "lastCheckIn": { "type": "string" },
+        "lastMonth": { "type": "string" },
+        "points": { "type": "number" },
+        "streak": { "type": "number" },
+        "recognitions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["uid", "whatsapp", "email", "checkInsThisMonth", "lastMonth", "points", "streak"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "1-on-1 Session Booking",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "name", "date", "time", "status", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Testimony or Anonymous Question",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["testimony", "anonymous"] },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "userName": { "type": "string" }
+      },
+      "required": ["type", "content", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users_public/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublic" },
+      "description": "Public user profiles for the leaderboard."
+    },
+    "/users_private/{userId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Private user data including WhatsApp number."
+    },
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Bookings for 1-on-1 sessions. ID is date_time."
+    },
+    "/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Testimonies and anonymous questions."
+    }
+  }
+}
