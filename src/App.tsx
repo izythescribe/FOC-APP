@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Joyride, STATUS, Step, Lifecycle } from 'react-joyride';
 import { 
   Flame, Calendar, Trophy, Home, CheckSquare, LogOut, 
   MessageCircle, CheckCircle2, BookOpen, ChevronRight, 
@@ -41,6 +42,7 @@ interface UserData {
   points: number;
   streak: number;
   recognitions?: string[];
+  graceTokenLastUsed?: string;
 }
 
 interface LeaderboardEntry {
@@ -146,6 +148,40 @@ function App() {
   const [msgContent, setMsgContent] = useState('');
   const [msgStatus, setMsgStatus] = useState('');
 
+  // Tour State
+  const [runTour, setRunTour] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const tourSteps = [
+    {
+      target: isMobile ? '.mobile-tour-dashboard' : '.desktop-tour-dashboard',
+      content: 'Welcome to the F.O.C. Portal! This is your dashboard where you can see your current streak and total points.',
+      disableBeacon: true,
+    },
+    {
+      target: isMobile ? '.mobile-tour-checkin' : '.desktop-tour-checkin',
+      content: 'Here is your Daily Altar. Click here to log your spiritual activities for the day and earn points to keep your fire burning!',
+    },
+    {
+      target: isMobile ? '.mobile-tour-leaderboard' : '.desktop-tour-leaderboard',
+      content: 'Check the Awards section to see the consistency leaderboard and who is leading the charge this month.',
+    },
+    {
+      target: isMobile ? '.mobile-tour-booking' : '.desktop-tour-booking',
+      content: 'Need guidance? Book a 1-on-1 session with your mentor here.',
+    },
+    {
+      target: isMobile ? '.mobile-tour-messages' : '.desktop-tour-messages',
+      content: 'Share your testimonies or ask anonymous questions directly to your mentor in the Messages section.',
+    }
+  ];
+
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -190,6 +226,10 @@ function App() {
         
         if (currentView === 'auth' || currentView === 'onboarding') {
           setCurrentView('dashboard');
+          // Start tour if it's their first time logging in (points are 0 and streak is 0)
+          if (data.points === 0 && data.streak === 0 && data.checkInsThisMonth.length === 0) {
+             setRunTour(true);
+          }
         }
       } else {
         setCurrentView('onboarding');
@@ -307,6 +347,7 @@ function App() {
       });
 
       setCurrentView('dashboard');
+      setRunTour(true); // Start tour after onboarding
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `users_private/${authUser.uid}`);
     }
@@ -337,6 +378,7 @@ function App() {
 
     // Calculate streak
     let newStreak = userData.streak;
+    let usedGraceToken = false;
     const lastCheckInDate = userData.lastCheckIn ? new Date(userData.lastCheckIn) : null;
     const todayDate = new Date(todayStr);
     
@@ -346,7 +388,22 @@ function App() {
       if (diffDays === 1) {
         newStreak += 1;
       } else if (diffDays > 1) {
-        newStreak = 1;
+        // Check if Grace Token is available
+        let graceTokenAvailable = true;
+        if (userData.graceTokenLastUsed) {
+          const lastUsed = new Date(userData.graceTokenLastUsed);
+          const availableAt = new Date(lastUsed.getTime() + 30 * 24 * 60 * 60 * 1000);
+          if (new Date() < availableAt) {
+            graceTokenAvailable = false;
+          }
+        }
+        
+        if (graceTokenAvailable) {
+          newStreak += 1; // Save the streak
+          usedGraceToken = true;
+        } else {
+          newStreak = 1; // Streak broken
+        }
       }
     } else {
       newStreak = 1;
@@ -356,12 +413,18 @@ function App() {
     const newTotalPoints = (userData.points || 0) + earnedPoints;
 
     try {
-      await updateDoc(doc(db, `users_private/${authUser.uid}`), {
+      const privateUpdate: any = {
         points: newTotalPoints,
         streak: newStreak,
         lastCheckIn: todayStr,
         checkInsThisMonth: newCheckIns
-      });
+      };
+      
+      if (usedGraceToken) {
+        privateUpdate.graceTokenLastUsed = new Date().toISOString();
+      }
+
+      await updateDoc(doc(db, `users_private/${authUser.uid}`), privateUpdate);
 
       await updateDoc(doc(db, `users_public/${authUser.uid}`), {
         points: newTotalPoints,
@@ -539,12 +602,45 @@ function App() {
     }
   };
 
+  const handleJoyrideCallback = (data: any) => {
+    const { status } = data;
+    const finishedStatuses: string[] = [STATUS.FINISHED, STATUS.SKIPPED];
+
+    if (finishedStatuses.includes(status)) {
+      setRunTour(false);
+    }
+  };
+
   // --- Render Helpers ---
   const todayStr = new Date().toISOString().split('T')[0];
   const hasCheckedInToday = userData?.lastCheckIn === todayStr;
   const currentDayOfWeek = new Date().getDay();
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const todayName = dayNames[currentDayOfWeek];
+
+  const getGraceTokenStatus = () => {
+    if (!userData?.graceTokenLastUsed) {
+      return { available: true, text: 'Available Now', lastUsed: null, availableDate: null };
+    }
+    const lastUsed = new Date(userData.graceTokenLastUsed);
+    const availableAt = new Date(lastUsed.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+    
+    if (now >= availableAt) {
+      return { available: true, text: 'Available Now', lastUsed: lastUsed.toLocaleDateString(), availableDate: null };
+    }
+    
+    const diffTime = Math.abs(availableAt.getTime() - now.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+    return { 
+      available: false, 
+      text: `Available in ${diffDays} day${diffDays !== 1 ? 's' : ''}`,
+      lastUsed: lastUsed.toLocaleDateString(),
+      availableDate: availableAt.toLocaleDateString()
+    };
+  };
+
+  const graceToken = getGraceTokenStatus();
 
   // --- Views ---
   const renderAuth = () => (
@@ -683,6 +779,38 @@ function App() {
           </div>
         </motion.div>
       </div>
+
+      <motion.div 
+        initial={{ y: 20, opacity: 0 }} 
+        animate={{ y: 0, opacity: 1 }} 
+        transition={{ delay: 0.35 }}
+        className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-3xl border border-white/5 shadow-xl relative overflow-hidden group hover:border-purple-500/50 transition-colors"
+      >
+        <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-40 transition-opacity group-hover:scale-110 duration-500"><ShieldCheck size={48} className={graceToken.available ? "text-purple-400" : "text-slate-600"} /></div>
+        <div className="flex items-center gap-2 mb-1">
+          <p className="text-slate-400 font-medium">Grace Token</p>
+          {graceToken.available ? (
+            <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-[10px] font-bold uppercase tracking-wider">Ready</span>
+          ) : (
+            <span className="px-2 py-0.5 bg-slate-700 text-slate-400 rounded-full text-[10px] font-bold uppercase tracking-wider">Cooldown</span>
+          )}
+        </div>
+        <div className="flex flex-col gap-1 mt-2">
+          <span className={`text-2xl font-black ${graceToken.available ? 'text-white' : 'text-slate-500'}`}>
+            {graceToken.text}
+          </span>
+          {graceToken.lastUsed && (
+            <p className="text-sm text-slate-500">
+              Last used: <span className="text-slate-400">{graceToken.lastUsed}</span>
+            </p>
+          )}
+          {graceToken.availableDate && (
+            <p className="text-sm text-slate-500">
+              Available again: <span className="text-slate-400">{graceToken.availableDate}</span>
+            </p>
+          )}
+        </div>
+      </motion.div>
 
       <motion.div 
         initial={{ y: 20, opacity: 0 }} 
@@ -1030,6 +1158,42 @@ function App() {
 
   return (
     <div className="flex h-screen bg-[#0a0a0a] text-slate-200 font-sans selection:bg-cyan-500/30">
+      <Joyride
+        steps={tourSteps}
+        run={runTour}
+        continuous={true}
+        onEvent={handleJoyrideCallback}
+        styles={{
+          options: {
+            primaryColor: '#06b6d4', // cyan-500
+            backgroundColor: '#1e293b', // slate-800
+            textColor: '#f8fafc', // slate-50
+            arrowColor: '#1e293b',
+            overlayColor: 'rgba(0, 0, 0, 0.7)',
+          },
+          buttonNext: {
+            backgroundColor: '#06b6d4',
+            borderRadius: '8px',
+            padding: '8px 16px',
+            fontWeight: 'bold',
+          },
+          buttonBack: {
+            color: '#94a3b8', // slate-400
+            marginRight: '10px',
+          },
+          buttonSkip: {
+            color: '#94a3b8',
+          },
+          tooltipContainer: {
+            textAlign: 'left',
+          },
+          tooltipTitle: {
+            fontSize: '18px',
+            fontWeight: 'bold',
+            marginBottom: '8px',
+          }
+        } as any}
+      />
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex flex-col w-64 bg-slate-900/50 border-r border-white/5 p-6">
         <div className="flex items-center gap-3 mb-12">
@@ -1043,7 +1207,7 @@ function App() {
             <button
               key={item.id}
               onClick={() => setCurrentView(item.id as any)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all desktop-tour-${item.id} ${
                 currentView === item.id ? 'bg-cyan-500/10 text-cyan-400' : 'text-slate-400 hover:bg-white/5 hover:text-white'
               }`}
             >
@@ -1087,7 +1251,7 @@ function App() {
           <button
             key={item.id}
             onClick={() => setCurrentView(item.id as any)}
-            className={`flex flex-col items-center gap-1 p-2 ${currentView === item.id ? 'text-cyan-400' : 'text-slate-500'}`}
+            className={`flex flex-col items-center gap-1 p-2 mobile-tour-${item.id} ${currentView === item.id ? 'text-cyan-400' : 'text-slate-500'}`}
           >
             <item.icon size={24} />
             <span className="text-[10px] font-bold uppercase tracking-wider">{item.label}</span>
